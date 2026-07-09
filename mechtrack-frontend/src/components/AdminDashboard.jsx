@@ -1,158 +1,484 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import { 
+  getMechanics, 
+  createMechanic, 
+  getJobs, 
+  createJob, 
+  getPayrolls, 
+  processPayroll 
+} from '../lib/api';
 
 export default function AdminDashboard() {
+  const [activeTab, setActiveTab] = useState('roster');
   const [mechanics, setMechanics] = useState([]);
   const [loading, setLoading] = useState(true);
-  
-  // Form State
-  const [showForm, setShowForm] = useState(false);
+
+  // --- Roster Form State ---
+  const [showRosterForm, setShowRosterForm] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState(''); // Supabase Auth requires a password to create a user
-  const [formError, setFormError] = useState('');
-  const [formSuccess, setFormSuccess] = useState('');
+  const [password, setPassword] = useState('');
+  const [hourlyRate, setHourlyRate] = useState('25.00');
+  const [rosterError, setRosterError] = useState('');
+  const [rosterSuccess, setRosterSuccess] = useState('');
 
-  // Fetch all mechanics when the component loads
+  // --- Job Form/List State ---
+  const [jobs, setJobs] = useState([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [showJobForm, setShowJobForm] = useState(false);
+  const [vehicleDetails, setVehicleDetails] = useState('');
+  const [description, setDescription] = useState('');
+  const [assignedTo, setAssignedTo] = useState('');
+  const [jobError, setJobError] = useState('');
+  const [jobSuccess, setJobSuccess] = useState('');
+
+  // --- Payroll Form/List State ---
+  const [payrolls, setPayrolls] = useState([]);
+  const [payrollLoading, setPayrollLoading] = useState(false);
+  const [selectedMechanic, setSelectedMechanic] = useState('');
+  const [hoursWorked, setHoursWorked] = useState('');
+  const [payrollError, setPayrollError] = useState('');
+  const [payrollSuccess, setPayrollSuccess] = useState('');
+
+  // --- API Fetch Functions ---
   const fetchMechanics = async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('mechanics')
-      .select('*')
-      .order('name', { ascending: true });
-
-    if (error) {
-      console.error('Error fetching mechanics:', error.message);
-    } else {
+    try {
+      setLoading(true);
+      const data = await getMechanics();
       setMechanics(data);
+    } catch (err) {
+      console.error('Error fetching mechanics:', err.message);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
+  const fetchJobsData = async () => {
+    try {
+      setJobsLoading(true);
+      const data = await getJobs();
+      setJobs(data);
+    } catch (err) {
+      console.error('Error fetching jobs:', err.message);
+    } finally {
+      setJobsLoading(false);
+    }
+  };
+
+  const fetchPayrollsData = async () => {
+    try {
+      setPayrollLoading(true);
+      const data = await getPayrolls();
+      setPayrolls(data);
+    } catch (err) {
+      console.error('Error fetching payrolls:', err.message);
+    } finally {
+      setPayrollLoading(false);
+    }
+  };
+
+  // Run when component mounts & tab changes
   useEffect(() => {
     fetchMechanics();
   }, []);
 
-  // Handle adding a new mechanic
+  useEffect(() => {
+    if (activeTab === 'jobs') {
+      fetchJobsData();
+    } else if (activeTab === 'payroll') {
+      fetchPayrollsData();
+    }
+  }, [activeTab]);
+
+  // --- Handlers ---
   const handleAddMechanic = async (e) => {
     e.preventDefault();
-    setFormError('');
-    setFormSuccess('');
+    setRosterError('');
+    setRosterSuccess('');
 
     try {
-      // 1. Create the user in Supabase Auth (this registers them)
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      await createMechanic({
         email,
         password,
-        options: {
-          data: {
-            full_name: name,
-          }
-        }
+        name,
+        hourlyRate
       });
 
-      if (authError) throw authError;
-
-      // 2. Add the profile record into our public 'mechanics' table
-      const { error: profileError } = await supabase
-        .from('mechanics')
-        .insert([
-          {
-            id: authData.user.id, // Link to their new Auth ID!
-            name: name,
-            email: email,
-            is_admin: false // Default to standard mechanic
-          }
-        ]);
-
-      if (profileError) throw profileError;
-
-      // Success!
-      setFormSuccess('🔧 Mechanic added successfully!');
+      setRosterSuccess('Mechanic added successfully!');
       setName('');
       setEmail('');
       setPassword('');
-      setShowForm(false);
-      fetchMechanics(); // Refresh our table list!
-
+      setHourlyRate('25.00');
+      setShowRosterForm(false);
+      fetchMechanics();
     } catch (err) {
-      setFormError(err.message || 'Something went wrong.');
+      setRosterError(err.message || 'Something went wrong.');
+    }
+  };
+
+  const handleCreateJob = async (e) => {
+    e.preventDefault();
+    setJobError('');
+    setJobSuccess('');
+
+    try {
+      await createJob({
+        vehicleDetails,
+        description,
+        assignedTo
+      });
+
+      setJobSuccess('Job created and assigned successfully!');
+      setVehicleDetails('');
+      setDescription('');
+      setAssignedTo('');
+      setShowJobForm(false);
+      fetchJobsData();
+    } catch (err) {
+      setJobError(err.message || 'Could not create job.');
+    }
+  };
+
+  const handleProcessPayroll = async (e) => {
+    e.preventDefault();
+    setPayrollError('');
+    setPayrollSuccess('');
+
+    try {
+      const result = await processPayroll({
+        mechanicId: selectedMechanic,
+        totalHours: hoursWorked
+      });
+
+      setPayrollSuccess(`Payroll processed! Total Pay: $${parseFloat(result.total_amount).toFixed(2)}`);
+      setSelectedMechanic('');
+      setHoursWorked('');
+      fetchPayrollsData();
+    } catch (err) {
+      setPayrollError(err.message || 'Failed to process payroll.');
     }
   };
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '800px', margin: '0 auto' }}>
+    <div className="animate-fade-in">
       
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #e5e7eb', paddingBottom: '10px' }}>
-        <h2 style={{ margin: 0 }}>👥 Mechanics Roster</h2>
+      {/* Tab Switcher */}
+      <div className="tabs-container">
         <button 
-          onClick={() => setShowForm(!showForm)} 
-          style={{ padding: '8px 16px', background: showForm ? '#4b5563' : '#2563eb', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+          onClick={() => setActiveTab('roster')} 
+          className={`tab-btn ${activeTab === 'roster' ? 'active' : ''}`}
         >
-          {showForm ? 'Cancel' : '➕ Add Mechanic'}
+          👥 Mechanics
+        </button>
+        <button 
+          onClick={() => setActiveTab('jobs')} 
+          className={`tab-btn ${activeTab === 'jobs' ? 'active' : ''}`}
+        >
+          📋 Jobs
+        </button>
+        <button 
+          onClick={() => setActiveTab('payroll')} 
+          className={`tab-btn ${activeTab === 'payroll' ? 'active' : ''}`}
+        >
+          💰 Payroll
         </button>
       </div>
 
-      {/* --- ADD MECHANIC FORM --- */}
-      {showForm && (
-        <form onSubmit={handleAddMechanic} style={{ background: '#f9fafb', padding: '20px', borderRadius: '8px', border: '1px solid #e5e7eb', marginTop: '20px' }}>
-          <h3 style={{ marginTop: 0 }}>Add New Mechanic</h3>
-          {formError && <p style={{ color: '#dc2626', backgroundColor: '#fee2e2', padding: '8px', borderRadius: '4px' }}>{formError}</p>}
-          
-          <div style={{ marginBottom: '12px' }}>
-            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '4px' }}>Full Name</label>
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)} required style={{ width: '100%', padding: '8px', boxSizing: 'border-box', border: '1px solid #d1d5db', borderRadius: '4px' }} />
+      {/* ======================================================== */}
+      {/* 1. MECHANICS ROSTER TAB */}
+      {/* ======================================================== */}
+      {activeTab === 'roster' && (
+        <div className="animate-fade-in">
+          <div className="section-header">
+            <h2>Mechanics Roster</h2>
+            <button 
+              onClick={() => setShowRosterForm(!showRosterForm)} 
+              className={`btn ${showRosterForm ? 'btn-secondary' : 'btn-primary'}`}
+            >
+              {showRosterForm ? 'Cancel' : '➕ Add Mechanic'}
+            </button>
           </div>
 
-          <div style={{ marginBottom: '12px' }}>
-            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '4px' }}>Email Address</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ width: '100%', padding: '8px', boxSizing: 'border-box', border: '1px solid #d1d5db', borderRadius: '4px' }} />
-          </div>
+          {showRosterForm && (
+            <div className="form-card animate-fade-in">
+              <h3 style={{ marginBottom: '20px' }}>Add New Mechanic</h3>
+              {rosterError && <div className="alert alert-error">{rosterError}</div>}
+              
+              <form onSubmit={handleAddMechanic} className="form-grid">
+                <div className="form-group full-width">
+                  <label className="form-label">Full Name</label>
+                  <input type="text" className="input-field" value={name} onChange={(e) => setName(e.target.value)} required />
+                </div>
 
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '4px' }}>Temporary Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Min 6 characters" style={{ width: '100%', padding: '8px', boxSizing: 'border-box', border: '1px solid #d1d5db', borderRadius: '4px' }} />
-          </div>
+                <div className="form-group full-width">
+                  <label className="form-label">Email Address</label>
+                  <input type="email" className="input-field" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                </div>
 
-          <button type="submit" style={{ padding: '10px 16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', width: '100%' }}>
-            Save Mechanic
-          </button>
-        </form>
-      )}
+                <div className="form-group">
+                  <label className="form-label">Hourly Rate ($)</label>
+                  <input type="number" className="input-field" step="0.01" min="0" value={hourlyRate} onChange={(e) => setHourlyRate(e.target.value)} required />
+                </div>
+                
+                <div className="form-group">
+                  <label className="form-label">Temporary Password</label>
+                  <input type="password" className="input-field" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Min 6 characters" />
+                </div>
 
-      {formSuccess && <p style={{ color: '#059669', backgroundColor: '#d1fae5', padding: '10px', borderRadius: '4px', marginTop: '15px' }}>{formSuccess}</p>}
+                <div className="full-width">
+                  <button type="submit" className="btn btn-success" style={{ width: '100%' }}>
+                    Save Mechanic
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
 
-      {/* --- ROSTER TABLE --- */}
-      {loading ? (
-        <p style={{ marginTop: '20px' }}>Loading roster...</p>
-      ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#f3f4f6', textAlign: 'left' }}>
-              <th style={{ padding: '12px', borderBottom: '1px solid #e5e7eb' }}>Name</th>
-              <th style={{ padding: '12px', borderBottom: '1px solid #e5e7eb' }}>Email</th>
-              <th style={{ padding: '12px', borderBottom: '1px solid #e5e7eb' }}>Role</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mechanics.length === 0 ? (
-              <tr>
-                <td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>No mechanics found in roster.</td>
-              </tr>
-            ) : (
-              mechanics.map((mech) => (
-                <tr key={mech.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
-                  <td style={{ padding: '12px' }}>{mech.name || 'N/A'}</td>
-                  <td style={{ padding: '12px' }}>{mech.email}</td>
-                  <td style={{ padding: '12px' }}>
-                    {mech.is_admin ? '👑 Admin' : '🔧 Mechanic'}
-                  </td>
+          {rosterSuccess && <div className="alert alert-success">{rosterSuccess}</div>}
+
+          {loading ? (
+            <p>Loading roster...</p>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Hourly Rate</th>
+                  <th>Role</th>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {mechanics.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" style={{ textAlign: 'center' }}>No mechanics found in roster.</td>
+                  </tr>
+                ) : (
+                  mechanics.map((mech) => (
+                    <tr key={mech.id}>
+                      <td style={{ fontWeight: '500' }}>{mech.full_name || 'N/A'}</td>
+                      <td>{mech.email}</td>
+                      <td>${parseFloat(mech.hourly_rate || 0).toFixed(2)}/hr</td>
+                      <td>
+                        {mech.is_admin ? (
+                          <span className="badge badge-success">Admin</span>
+                        ) : (
+                          <span className="badge badge-pending">Mechanic</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
+
+      {/* ======================================================== */}
+      {/* 2. JOB MANAGEMENT TAB */}
+      {/* ======================================================== */}
+      {activeTab === 'jobs' && (
+        <div className="animate-fade-in">
+          <div className="section-header">
+            <h2>Repair Job Management</h2>
+            <button 
+              onClick={() => setShowJobForm(!showJobForm)} 
+              className={`btn ${showJobForm ? 'btn-secondary' : 'btn-primary'}`}
+            >
+              {showJobForm ? 'Cancel' : '➕ Create Job'}
+            </button>
+          </div>
+
+          {showJobForm && (
+            <div className="form-card animate-fade-in">
+              <h3 style={{ marginBottom: '20px' }}>Create Repair Job</h3>
+              {jobError && <div className="alert alert-error">{jobError}</div>}
+
+              <form onSubmit={handleCreateJob} className="form-grid">
+                <div className="form-group full-width">
+                  <label className="form-label">Vehicle Details</label>
+                  <input 
+                    type="text" 
+                    className="input-field"
+                    value={vehicleDetails} 
+                    onChange={(e) => setVehicleDetails(e.target.value)} 
+                    placeholder="e.g. 2018 Honda Civic (Plate: ABC-1234)" 
+                    required 
+                  />
+                </div>
+
+                <div className="form-group full-width">
+                  <label className="form-label">Job Description</label>
+                  <textarea 
+                    className="input-field"
+                    value={description} 
+                    onChange={(e) => setDescription(e.target.value)} 
+                    placeholder="Describe repair required" 
+                    required 
+                    rows="3" 
+                  />
+                </div>
+
+                <div className="form-group full-width">
+                  <label className="form-label">Assign Mechanic</label>
+                  <select 
+                    className="input-field"
+                    value={assignedTo} 
+                    onChange={(e) => setAssignedTo(e.target.value)} 
+                    required
+                  >
+                    <option value="">-- Select a Mechanic --</option>
+                    {mechanics.filter(m => !m.is_admin).map(mech => (
+                      <option key={mech.id} value={mech.id}>{mech.full_name} ({mech.email})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="full-width">
+                  <button type="submit" className="btn btn-success" style={{ width: '100%' }}>
+                    Assign Repair Job
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {jobSuccess && <div className="alert alert-success">{jobSuccess}</div>}
+
+          {jobsLoading ? (
+            <p>Loading repair jobs...</p>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Vehicle</th>
+                  <th>Description</th>
+                  <th>Assigned Mechanic</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" style={{ textAlign: 'center' }}>No repair jobs created yet.</td>
+                  </tr>
+                ) : (
+                  jobs.map((job) => (
+                    <tr key={job.id}>
+                      <td style={{ fontWeight: '600' }}>{job.vehicle_details}</td>
+                      <td>{job.description}</td>
+                      <td>{job.assigned_mechanic?.full_name || 'Unassigned'}</td>
+                      <td>
+                        <span className={`badge ${job.status === 'Completed' ? 'badge-success' : job.status === 'In Progress' ? 'badge-progress' : 'badge-pending'}`}>
+                          {job.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 3. PAYROLL PROCESSING TAB */}
+      {/* ======================================================== */}
+      {activeTab === 'payroll' && (
+        <div className="animate-fade-in">
+          <div className="section-header">
+            <h2>Payroll Management</h2>
+          </div>
+
+          <div className="split-layout">
+            {/* Run Payroll Form */}
+            <div className="form-card" style={{ margin: 0 }}>
+              <h3 style={{ marginBottom: '20px' }}>Process Payroll</h3>
+              {payrollError && <div className="alert alert-error">{payrollError}</div>}
+              {payrollSuccess && <div className="alert alert-success">{payrollSuccess}</div>}
+
+              <form onSubmit={handleProcessPayroll}>
+                <div className="form-group">
+                  <label className="form-label">Select Mechanic</label>
+                  <select 
+                    className="input-field"
+                    value={selectedMechanic} 
+                    onChange={(e) => setSelectedMechanic(e.target.value)} 
+                    required
+                  >
+                    <option value="">-- Select Mechanic --</option>
+                    {mechanics.filter(m => !m.is_admin).map(mech => (
+                      <option key={mech.id} value={mech.id}>{mech.full_name} (${parseFloat(mech.hourly_rate || 0).toFixed(2)}/hr)</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Total Hours Worked</label>
+                  <input 
+                    type="number" 
+                    className="input-field"
+                    step="0.1" 
+                    min="0"
+                    value={hoursWorked} 
+                    onChange={(e) => setHoursWorked(e.target.value)} 
+                    placeholder="e.g. 45" 
+                    required 
+                  />
+                </div>
+
+                <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>
+                  Calculate & Save
+                </button>
+              </form>
+            </div>
+
+            {/* Payroll History */}
+            <div>
+              <h3 style={{ marginBottom: '20px' }}>Audit History</h3>
+              {payrollLoading ? (
+                <p>Loading payroll history...</p>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Mechanic</th>
+                      <th>Hours</th>
+                      <th>Base Pay</th>
+                      <th>Bonus (OT)</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payrolls.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" style={{ textAlign: 'center' }}>No payroll records found.</td>
+                      </tr>
+                    ) : (
+                      payrolls.map((pr) => (
+                        <tr key={pr.id}>
+                          <td style={{ fontWeight: '600' }}>{pr.mechanic?.full_name || 'Unknown'}</td>
+                          <td>{pr.total_hours}h</td>
+                          <td>${parseFloat(pr.base_amount).toFixed(2)}</td>
+                          <td style={{ color: parseFloat(pr.bonus_amount) > 0 ? 'var(--danger)' : 'inherit' }}>
+                            ${parseFloat(pr.bonus_amount).toFixed(2)}
+                          </td>
+                          <td style={{ fontWeight: '600', color: 'var(--success)' }}>
+                            ${parseFloat(pr.total_amount).toFixed(2)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
