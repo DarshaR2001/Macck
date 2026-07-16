@@ -44,12 +44,22 @@ export const getMechanics = async () => {
 };
 
 // Create a new mechanic securely
-export const createMechanic = async ({ email, password, name, hourlyRate }) => {
+export const createMechanic = async ({ email, password, name, dailyRate }) => {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_BASE_URL}/mechanics`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ email, password, name, hourly_rate: hourlyRate })
+    body: JSON.stringify({ email, password, name, daily_rate: dailyRate })
+  });
+  return handleResponse(res);
+};
+
+// Delete a mechanic (admin only)
+export const deleteMechanic = async (mechanicId) => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/mechanics/${mechanicId}`, {
+    method: 'DELETE',
+    headers
   });
   return handleResponse(res);
 };
@@ -85,19 +95,27 @@ export const createJob = async ({ vehicleDetails, description, assignedTo }) => 
 };
 
 // Update status of a job (Mechanics or Admins)
-export const updateJobStatus = async (jobId, status) => {
+export const updateJobStatus = async (jobId, status, completionNote) => {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/status`, {
     method: 'PATCH',
     headers,
-    body: JSON.stringify({ status })
+    body: JSON.stringify({ status, completionNote })
   });
   return handleResponse(res);
 };
 
-/**
- * --- Payroll API ---
- */
+// Delete a job (admin only)
+export const deleteJob = async (jobId) => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/jobs/${jobId}`, {
+    method: 'DELETE',
+    headers
+  });
+  return handleResponse(res);
+};
+
+
 
 // Fetch all payroll history records (Admin only)
 export const getPayrolls = async () => {
@@ -115,12 +133,35 @@ export const getMechanicPayrolls = async () => {
 };
 
 // Run the payroll calculation RPC (Admin only)
-export const processPayroll = async ({ mechanicId, totalHours }) => {
+export const processPayroll = async ({ mechanicId, periodStart, periodEnd, daysWorked, bonusAmount }) => {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_BASE_URL}/payroll/process`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ mechanicId, totalHours })
+    body: JSON.stringify({ mechanicId, periodStart, periodEnd, daysWorked, bonusAmount })
   });
   return handleResponse(res);
 };
+
+/**
+ * --- Profile API ---
+ */
+
+// Fetch all seniority levels (for admin dropdown)
+export const getSeniorityLevels = async () => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/seniority-levels`, { headers });
+  return handleResponse(res);
+};
+
+// Update the calling user's own profile (field access enforced by backend)
+export const updateProfile = async (fields) => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/profile`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(fields)
+  });
+  return handleResponse(res);
+};
+

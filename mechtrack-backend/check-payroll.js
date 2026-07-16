@@ -26,7 +26,7 @@ async function checkColumns() {
     .from('payroll')
     .insert({
       mechanic_id: mechs[0].id,
-      total_hours: 40,
+      days_worked: 20,
       base_amount: 1000,
       bonus_amount: 0,
       total_amount: 1000,

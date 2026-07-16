@@ -4,7 +4,27 @@ import { useState, useEffect } from 'react';
 import { supabase } from './lib/supabaseClient';
 import AdminDashboard from './components/AdminDashboard';
 import MechanicDashboard from './components/MechanicDashboard';
+import ProfilePage from './components/ProfilePage';
 import './App.css';
+
+// --- Root Handler: always signs out then shows login ---
+// Supabase stores sessions in localStorage, so we must explicitly clear it
+// before redirecting to the login page.
+const RootHandler = () => {
+  const { signOut } = useAuth();
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    const clearSession = async () => {
+      await signOut(); // wipe existing session
+      setDone(true);
+    };
+    clearSession();
+  }, []);
+
+  if (!done) return null; // brief moment while signing out
+  return <Navigate to="/login" replace />;
+};
 
 // --- Login Page ---
 const Login = () => {
@@ -13,30 +33,22 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   
-  const { user } = useAuth();
   const navigate = useNavigate();
-
-  // Only redirect to dashboard if user is logged in
-  useEffect(() => {
-    if (user) {
-      navigate('/');
-    }
-  }, [user, navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg('');
-    
+
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    
+
     if (error) {
       setErrorMsg(error.message);
+      setLoading(false);
+    } else {
+      // Navigate to dashboard only after a successful fresh login
+      navigate('/dashboard', { replace: true });
     }
-    // Don't navigate here — the AuthContext listener will update `user`,
-    // which triggers the useEffect above to navigate to '/'
-    
-    setLoading(false);
   };
 
   return (
@@ -82,7 +94,8 @@ const Login = () => {
 
 // --- Dashboard Page ---
 const Dashboard = () => {
-  const { user, profile, signOut } = useAuth();
+  const { user, profile, profileLoading, signOut } = useAuth();
+  const navigate = useNavigate();
 
   return (
     <div className="app-container animate-fade-in">
@@ -90,6 +103,9 @@ const Dashboard = () => {
         <div className="brand-title">⚙️ MechTrack</div>
         <div className="user-controls">
           <span className="welcome-text">Welcome, {profile?.full_name || user?.email}</span>
+          <button onClick={() => navigate('/profile')} className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '14px' }}>
+            👤 Profile
+          </button>
           <button onClick={signOut} className="btn btn-secondary">
             Sign Out
           </button>
@@ -97,7 +113,20 @@ const Dashboard = () => {
       </header>
 
       <main className="main-content">
-        {profile?.is_admin ? (
+        {profileLoading ? (
+          // Wait for profile (is_admin flag) before deciding which dashboard to show
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '40px 0', color: 'var(--text-secondary)' }}>
+            <div style={{
+              width: '20px', height: '20px',
+              border: '3px solid var(--border-light, #e2e8f0)',
+              borderTopColor: 'var(--accent-primary, #3b82f6)',
+              borderRadius: '50%',
+              animation: 'spin 0.8s linear infinite'
+            }} />
+            Loading your dashboard...
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        ) : profile?.is_admin ? (
           <AdminDashboard />
         ) : (
           <MechanicDashboard />
@@ -121,12 +150,21 @@ export default function App() {
     <AuthProvider>
       <Router>
         <Routes>
+          {/* Root: sign out any existing session, then go to login */}
+          <Route path="/" element={<RootHandler />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/" element={
+          <Route path="/dashboard" element={
             <ProtectedRoute>
               <Dashboard />
             </ProtectedRoute>
           } />
+          <Route path="/profile" element={
+            <ProtectedRoute>
+              <ProfilePage />
+            </ProtectedRoute>
+          } />
+          {/* Catch-all: redirect unknown paths to login */}
+          <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </Router>
     </AuthProvider>

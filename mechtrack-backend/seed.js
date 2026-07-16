@@ -16,10 +16,10 @@ const supabase = createClient(
 
 // --- Mock Data ---
 const mockMechanics = [
-  { email: 'kalana@mechtrack.test', password: 'Test1234!', full_name: 'Kalana Madumalka', hourly_rate: 30.00 },
-  { email: 'nimal@mechtrack.test',  password: 'Test1234!', full_name: 'Nimal Perera',     hourly_rate: 28.50 },
-  { email: 'sahan@mechtrack.test',  password: 'Test1234!', full_name: 'Sahan Fernando',   hourly_rate: 32.00 },
-  { email: 'dilshi@mechtrack.test', password: 'Test1234!', full_name: 'Dilshi Kumari',    hourly_rate: 27.00 },
+  { email: 'kalana@mechtrack.test', password: 'Test1234!', full_name: 'Kalana Madumalka', daily_rate: 240.00 },
+  { email: 'nimal@mechtrack.test',  password: 'Test1234!', full_name: 'Nimal Perera',     daily_rate: 228.00 },
+  { email: 'sahan@mechtrack.test',  password: 'Test1234!', full_name: 'Sahan Fernando',   daily_rate: 256.00 },
+  { email: 'dilshi@mechtrack.test', password: 'Test1234!', full_name: 'Dilshi Kumari',    daily_rate: 216.00 },
 ];
 
 const jobTemplates = [
@@ -52,7 +52,7 @@ async function seed() {
         full_name: 'Darsha Ranasinghe',
         email: adminUser.email,
         is_admin: true,
-        hourly_rate: 50.00
+        daily_rate: 400.00
       }, { onConflict: 'id' });
     
     if (adminErr) {
@@ -81,7 +81,7 @@ async function seed() {
         full_name: mech.full_name,
         email: mech.email,
         is_admin: false,
-        hourly_rate: mech.hourly_rate
+        daily_rate: mech.daily_rate
       }, { onConflict: 'id' });
       createdMechanicIds.push(existing.id);
       continue;
@@ -106,7 +106,7 @@ async function seed() {
       full_name: mech.full_name,
       email: mech.email,
       is_admin: false,
-      hourly_rate: mech.hourly_rate
+      daily_rate: mech.daily_rate
     });
 
     if (dbError) {
@@ -114,7 +114,7 @@ async function seed() {
       // Clean up auth user
       await supabase.auth.admin.deleteUser(authData.user.id);
     } else {
-      console.log(`  ✅ Created: ${mech.full_name} (${mech.email}) — Rate: $${mech.hourly_rate}/hr`);
+      console.log(`  ✅ Created: ${mech.full_name} (${mech.email}) — Rate: $${mech.daily_rate}/day`);
       createdMechanicIds.push(authData.user.id);
     }
   }
@@ -154,26 +154,28 @@ async function seed() {
   // 4. Create mock payroll records
   // =============================================
   console.log('\n💰 Creating mock payroll records...');
-  const payrollRecords = [];
-  const hoursOptions = [35, 40, 42, 45, 38, 48, 36, 44];
+  const daysOptions = [15, 20, 21, 22, 18, 23, 19, 21.5];
 
   for (let i = 0; i < createdMechanicIds.length; i++) {
     // Each mechanic gets 2 payroll records
     for (let round = 0; round < 2; round++) {
       const mechId = createdMechanicIds[i];
-      const hours = hoursOptions[(i * 2 + round) % hoursOptions.length];
+      const days = daysOptions[(i * 2 + round) % daysOptions.length];
 
       // Use the RPC function to calculate payroll correctly
       const { data, error } = await supabase.rpc('process_mechanic_payroll', {
         p_mechanic_id: mechId,
-        p_total_hours: hours
+        p_period_start: round === 0 ? '2026-06-01' : '2026-06-16',
+        p_period_end: round === 0 ? '2026-06-15' : '2026-06-30',
+        p_days_worked: days,
+        p_bonus_amount: round === 0 ? 0.00 : 100.00
       });
 
       if (error) {
         console.error(`  ❌ Payroll RPC error for mechanic ${i + 1}:`, error.message);
       } else {
         const total = typeof data === 'object' ? data.total_amount : data;
-        console.log(`  ✅ Payroll processed: Mechanic ${i + 1}, ${hours}h → $${parseFloat(total || 0).toFixed(2)}`);
+        console.log(`  ✅ Payroll processed: Mechanic ${i + 1}, ${days} days → $${parseFloat(total || 0).toFixed(2)}`);
       }
     }
   }

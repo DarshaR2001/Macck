@@ -36,7 +36,7 @@ app.get('/api/mechanics', requireAuth, async (req, res) => {
 
 // 2. Add a Mechanic (Admin Only, secure creation of user)
 app.post('/api/mechanics', requireAuth, requireAdmin, async (req, res) => {
-  const { email, password, name, hourly_rate } = req.body;
+  const { email, password, name, daily_rate } = req.body;
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'Missing required fields (email, password, name)' });
   }
@@ -63,7 +63,7 @@ app.post('/api/mechanics', requireAuth, requireAdmin, async (req, res) => {
           full_name: name,
           email,
           is_admin: false,
-          hourly_rate: hourly_rate ? parseFloat(hourly_rate) : 25.00
+          daily_rate: daily_rate ? parseFloat(daily_rate) : 200.00
         }
       ])
       .select()
@@ -76,6 +76,41 @@ app.post('/api/mechanics', requireAuth, requireAdmin, async (req, res) => {
     }
 
     res.status(201).json({ user: newUser, mechanic: mechanicData });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Delete Mechanic (Admin Only) — cascades through related records
+app.delete('/api/mechanics/:id', requireAuth, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    // Step 1: Delete all payroll records for this mechanic (FK: payroll.mechanic_id)
+    const { error: payrollError } = await supabase
+      .from('payroll')
+      .delete()
+      .eq('mechanic_id', id);
+    if (payrollError) throw payrollError;
+
+    // Step 2: Unassign any jobs assigned to this mechanic (FK: jobs.assigned_to)
+    const { error: jobsError } = await supabase
+      .from('jobs')
+      .update({ assigned_to: null })
+      .eq('assigned_to', id);
+    if (jobsError) throw jobsError;
+
+    // Step 3: Delete from mechanics table
+    const { error: dbError } = await supabase
+      .from('mechanics')
+      .delete()
+      .eq('id', id);
+    if (dbError) throw dbError;
+
+    // Step 4: Delete from Supabase Auth
+    const { error: authError } = await supabase.auth.admin.deleteUser(id);
+    if (authError) console.warn('Auth delete warning:', authError.message);
+
+    res.status(200).json({ message: 'Mechanic deleted successfully' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -134,10 +169,26 @@ app.post('/api/jobs', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// 3. Update Job Status (Authenticated: Owner or Admin)
+// 3. Delete Job (Admin Only)
+app.delete('/api/jobs/:id', requireAuth, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { error } = await supabase
+      .from('jobs')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    res.status(200).json({ message: 'Job deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Update Job Status (Authenticated: Owner or Admin)
 app.patch('/api/jobs/:id/status', requireAuth, async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body;
+  const { status, completionNote } = req.body;
   
   if (!status || !['Pending', 'In Progress', 'Completed'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status value' });
@@ -161,9 +212,14 @@ app.patch('/api/jobs/:id/status', requireAuth, async (req, res) => {
       }
     }
 
+    const updateObj = { status };
+    if (status === 'Completed' && completionNote !== undefined) {
+      updateObj.completion_note = completionNote;
+    }
+
     const { data, error } = await supabase
       .from('jobs')
-      .update({ status })
+      .update(updateObj)
       .eq('id', id)
       .select()
       .single();
@@ -201,16 +257,75 @@ app.get('/api/payroll', requireAuth, async (req, res) => {
 
 // 2. Process Payroll via DB stored procedure (Admin Only)
 app.post('/api/payroll/process', requireAuth, requireAdmin, async (req, res) => {
-  const { mechanicId, totalHours } = req.body;
-  if (!mechanicId || totalHours === undefined) {
-    return res.status(400).json({ error: 'Missing mechanicId or totalHours' });
+  const { mechanicId, periodStart, periodEnd, daysWorked, bonusAmount } = req.body;
+  if (!mechanicId || daysWorked === undefined) {
+    return res.status(400).json({ error: 'Missing mechanicId or daysWorked' });
   }
 
   try {
     const { data, error } = await supabase.rpc('process_mechanic_payroll', {
       p_mechanic_id: mechanicId,
-      p_total_hours: parseFloat(totalHours)
+      p_period_start: periodStart,
+      p_period_end: periodEnd,
+      p_days_worked: parseFloat(daysWorked),
+      p_bonus_amount: parseFloat(bonusAmount || 0)
     });
+
+    if (error) throw error;
+    res.status(200).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * --- Profile & Seniority Endpoints ---
+ */
+
+// 1. Get all seniority levels (for dropdown in admin profile form)
+app.get('/api/seniority-levels', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('seniority_levels')
+      .select('*')
+      .order('id', { ascending: true });
+    if (error) throw error;
+    res.status(200).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Update own profile — field-level access enforced here AND at DB trigger level
+app.patch('/api/profile', requireAuth, async (req, res) => {
+  const { full_name, contact_number, daily_rate, seniority_level_id, is_active, is_admin } = req.body;
+
+  // Build the update object based on role
+  const updates = {};
+
+  // Both mechanics and admins can edit these
+  if (full_name     !== undefined) updates.full_name     = full_name;
+  if (contact_number !== undefined) updates.contact_number = contact_number;
+
+  // Only admins can edit protected fields
+  if (req.user.is_admin) {
+    if (daily_rate        !== undefined) updates.daily_rate        = parseFloat(daily_rate);
+    if (seniority_level_id !== undefined) updates.seniority_level_id = seniority_level_id ? parseInt(seniority_level_id) : null;
+    if (is_active          !== undefined) updates.is_active          = Boolean(is_active);
+    if (is_admin           !== undefined) updates.is_admin           = Boolean(is_admin);
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No valid fields to update.' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('mechanics')
+      .update(updates)
+      .eq('id', req.user.id)
+      .select(`*, seniority_level:seniority_levels(id, name)`)
+      .single();
 
     if (error) throw error;
     res.status(200).json(data);

@@ -167,6 +167,16 @@ h1, h2, h3, h4, h5, h6 {
   transform: translateY(-1px);
 }
 
+.btn-danger {
+  background-color: var(--danger);
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: #dc2626; /* Darker red */
+  transform: translateY(-1px);
+}
+
 /* Badges */
 .badge {
   display: inline-flex;

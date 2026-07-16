@@ -37,32 +37,6 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     let isMounted = true;
 
-    const fetchSessionAndProfile = async () => {
-      try {
-        const { data, error: sessionError } = await supabase.auth.getSession();
-
-        if (sessionError) {
-          console.error("Session error:", sessionError);
-        }
-
-        const currentUser = data?.session?.user || null;
-
-        if (!isMounted) return;
-        setUser(currentUser);
-
-        if (currentUser) {
-          const profileData = await fetchProfile(currentUser.id);
-          if (isMounted) setProfile(profileData);
-        }
-      } catch (err) {
-        console.error("Unhandled error in AuthContext:", err);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
-    fetchSessionAndProfile();
-
     // Safety timeout: if loading takes more than 5 seconds, force show the app
     const safetyTimer = setTimeout(() => {
       if (isMounted) {
@@ -71,21 +45,24 @@ export const AuthProvider = ({ children }) => {
       }
     }, 5000);
 
-    // Listen for auth state changes (login/logout)
+    // Single source of truth for auth session changes (fires INITIAL_SESSION on registration)
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!isMounted) return;
 
         const currentUser = session?.user || null;
         setUser(currentUser);
-        setProfile(null);
 
         if (currentUser) {
           const profileData = await fetchProfile(currentUser.id);
-          if (isMounted) setProfile(profileData);
+          if (isMounted) {
+            setProfile(profileData);
+            setLoading(false);
+          }
+        } else {
+          setProfile(null);
+          setLoading(false);
         }
-
-        if (isMounted) setLoading(false);
       }
     );
 
@@ -119,16 +96,24 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Exposed so any component can refresh global profile after an update
+  const refreshProfile = async () => {
+    if (!user) return;
+    const profileData = await fetchProfile(user.id);
+    setProfile(profileData);
+  };
+
   const value = {
     user,
     profile,
     loading,
     profileLoading,
-    signOut: handleSignOut
+    signOut: handleSignOut,
+    refreshProfile
   };
 
-  // Show a loading spinner while auth OR profile is loading
-  if (loading || profileLoading) {
+  // Show a loading spinner ONLY while the initial auth check is happening
+  if (loading) {
     return (
       <AuthContext.Provider value={value}>
         <div style={{

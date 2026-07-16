@@ -3,24 +3,33 @@ import { useAuth } from '../context/AuthContext';
 import { getMechanicJobs, updateJobStatus, getMechanicPayrolls } from '../lib/api';
 
 export default function MechanicDashboard() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [jobs, setJobs] = useState([]);
   const [payrolls, setPayrolls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // --- Completion Note Modal State ---
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState('');
+  const [completionNote, setCompletionNote] = useState('');
+
   useEffect(() => {
+    // Wait for auth to finish resolving before we do anything
+    if (authLoading) return;
+
     const fetchMechanicData = async () => {
       try {
         setLoading(true);
         setErrorMsg('');
-        
-        // Fetch both jobs and payroll logs for this mechanic
-        const jobsData = await getMechanicJobs(); // Now fetched securely via API with JWT
+
+        // Fetch both jobs and payroll logs in parallel for speed
+        const [jobsData, payrollData] = await Promise.all([
+          getMechanicJobs(),
+          getMechanicPayrolls()
+        ]);
         setJobs(jobsData);
-        
-        const payrollData = await getMechanicPayrolls();
         setPayrolls(payrollData);
       } catch (err) {
         setErrorMsg(err.message || 'Error fetching data.');
@@ -31,14 +40,17 @@ export default function MechanicDashboard() {
 
     if (user?.id) {
       fetchMechanicData();
+    } else {
+      // Auth resolved but no user — stop the spinner
+      setLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, authLoading]);
 
-  const handleUpdateStatus = async (jobId, newStatus) => {
+  const handleUpdateStatus = async (jobId, newStatus, note) => {
     try {
       setErrorMsg('');
       setSuccessMsg('');
-      await updateJobStatus(jobId, newStatus);
+      await updateJobStatus(jobId, newStatus, note);
       setSuccessMsg(`Status updated to "${newStatus}"!`);
       
       // Refresh jobs list
@@ -47,6 +59,16 @@ export default function MechanicDashboard() {
     } catch (err) {
       setErrorMsg(err.message || 'Failed to update job status.');
     }
+  };
+
+  const handleModalSubmit = async (e) => {
+    e.preventDefault();
+    if (!completionNote.trim()) return;
+
+    setShowCompletionModal(false);
+    await handleUpdateStatus(selectedJobId, 'Completed', completionNote);
+    setSelectedJobId('');
+    setCompletionNote('');
   };
 
   return (
@@ -82,6 +104,11 @@ export default function MechanicDashboard() {
                         </span>
                       </div>
                       <p className="job-desc">{job.description}</p>
+                      {job.completion_note && (
+                        <div style={{ marginTop: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', padding: '8px 12px', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--success)' }}>
+                          <strong>Completion Note:</strong> {job.completion_note}
+                        </div>
+                      )}
                     </div>
 
                     <div className="job-actions">
@@ -95,7 +122,10 @@ export default function MechanicDashboard() {
                       )}
                       {job.status === 'In Progress' && (
                         <button 
-                          onClick={() => handleUpdateStatus(job.id, 'Completed')}
+                          onClick={() => {
+                            setSelectedJobId(job.id);
+                            setShowCompletionModal(true);
+                          }}
                           className="btn btn-success"
                         >
                           Complete Repair ✅
@@ -122,9 +152,9 @@ export default function MechanicDashboard() {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Hours Worked</th>
+                    <th>Days Worked</th>
                     <th>Base Amount</th>
-                    <th>Bonus Pay (OT)</th>
+                    <th>Bonus Pay</th>
                     <th>Total Paycheck</th>
                     <th>Processed Date</th>
                   </tr>
@@ -132,7 +162,7 @@ export default function MechanicDashboard() {
                 <tbody>
                   {payrolls.map((pr) => (
                     <tr key={pr.id}>
-                      <td>{pr.total_hours}h</td>
+                      <td>{pr.days_worked} days</td>
                       <td>${parseFloat(pr.base_amount).toFixed(2)}</td>
                       <td style={{ color: parseFloat(pr.bonus_amount) > 0 ? 'var(--danger)' : 'inherit' }}>
                         ${parseFloat(pr.bonus_amount).toFixed(2)}
@@ -141,7 +171,7 @@ export default function MechanicDashboard() {
                         ${parseFloat(pr.total_amount).toFixed(2)}
                       </td>
                       <td style={{ color: 'var(--text-secondary)' }}>
-                        {new Date(pr.created_at).toLocaleDateString()}
+                        {pr.period_start ? `${new Date(pr.period_start).toLocaleDateString()} - ${new Date(pr.period_end).toLocaleDateString()}` : new Date(pr.created_at).toLocaleDateString()}
                       </td>
                     </tr>
                   ))}
@@ -150,6 +180,64 @@ export default function MechanicDashboard() {
             )}
           </div>
 
+        </div>
+      )}
+
+      {/* Completion Note Modal */}
+      {showCompletionModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div className="glass-panel animate-fade-in" style={{
+            width: '100%',
+            maxWidth: '500px',
+            padding: '30px',
+            backgroundColor: 'var(--bg-secondary)',
+            boxShadow: 'var(--shadow-lg)'
+          }}>
+            <h3 style={{ marginBottom: '15px' }}>📝 Add Completion Note</h3>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '15px', fontSize: '0.9rem' }}>
+              Please describe the repairs performed and any parts used to complete this job.
+            </p>
+            <form onSubmit={handleModalSubmit}>
+              <div className="form-group">
+                <textarea
+                  className="input-field"
+                  rows="4"
+                  value={completionNote}
+                  onChange={(e) => setCompletionNote(e.target.value)}
+                  placeholder="e.g., Replaced brake pads, bled the brake lines, and road tested successfully."
+                  required
+                  style={{ resize: 'vertical' }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setShowCompletionModal(false);
+                    setSelectedJobId('');
+                    setCompletionNote('');
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-success">
+                  Complete Job ✅
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
