@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { updateProfile, getSeniorityLevels } from '../lib/api';
+import { supabase } from '../lib/supabaseClient';
 import { useNavigate } from 'react-router-dom';
 
 export default function ProfilePage() {
@@ -19,6 +20,13 @@ export default function ProfilePage() {
   const [saving, setSaving]                   = useState(false);
   const [successMsg, setSuccessMsg]           = useState('');
   const [errorMsg, setErrorMsg]               = useState('');
+
+  // --- Password Change State ---
+  const [newPassword, setNewPassword]         = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwSaving, setPwSaving]               = useState(false);
+  const [pwSuccess, setPwSuccess]             = useState('');
+  const [pwError, setPwError]                 = useState('');
 
   // Populate form from profile on mount / when profile changes
   useEffect(() => {
@@ -65,6 +73,34 @@ export default function ProfilePage() {
       setErrorMsg(err.message || 'Failed to save profile.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePasswordChange = async (e) => {
+    e.preventDefault();
+    setPwError('');
+    setPwSuccess('');
+
+    if (newPassword.length < 8) {
+      setPwError('Password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwError('Passwords do not match.');
+      return;
+    }
+
+    setPwSaving(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      setPwSuccess('Password updated successfully! ✅');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      setPwError(err.message || 'Failed to update password.');
+    } finally {
+      setPwSaving(false);
     }
   };
 
@@ -228,6 +264,68 @@ export default function ProfilePage() {
               disabled={saving}
             >
               {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* ── Password Reset Card ── */}
+      <div className="profile-card glass-panel" style={{ marginTop: '24px' }}>
+        <div className="profile-section-title">🔒 Change Password</div>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
+          Update your login password. Your current session will remain active.
+        </p>
+
+        {pwError   && <div className="alert alert-error">{pwError}</div>}
+        {pwSuccess && <div className="alert alert-success">{pwSuccess}</div>}
+
+        <form onSubmit={handlePasswordChange}>
+          <div className="profile-grid">
+            <div className="form-group">
+              <label className="form-label">New Password</label>
+              <input
+                type="password"
+                className="input-field"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+                placeholder="Min. 8 characters"
+                required
+                minLength={8}
+              />
+              {newPassword.length > 0 && newPassword.length < 8 && (
+                <span style={{ color: '#ef4444', fontSize: '0.78rem' }}>Too short — minimum 8 characters</span>
+              )}
+              {newPassword.length >= 8 && (
+                <span style={{ color: 'var(--success)', fontSize: '0.78rem' }}>✔ Strong enough</span>
+              )}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Confirm New Password</label>
+              <input
+                type="password"
+                className="input-field"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter new password"
+                required
+              />
+              {confirmPassword.length > 0 && confirmPassword !== newPassword && (
+                <span style={{ color: '#ef4444', fontSize: '0.78rem' }}>Passwords do not match</span>
+              )}
+              {confirmPassword.length > 0 && confirmPassword === newPassword && (
+                <span style={{ color: 'var(--success)', fontSize: '0.78rem' }}>✔ Passwords match</span>
+              )}
+            </div>
+          </div>
+
+          <div className="profile-actions" style={{ marginTop: '20px' }}>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={pwSaving || newPassword.length < 8 || newPassword !== confirmPassword}
+            >
+              {pwSaving ? 'Updating...' : '🔒 Update Password'}
             </button>
           </div>
         </form>

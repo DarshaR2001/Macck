@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getMechanicJobs, updateJobStatus, getMechanicPayrolls } from '../lib/api';
+import { getMechanicJobs, updateJobStatus, getMechanicPayrolls, getAdvances, requestAdvance } from '../lib/api';
 
 export default function MechanicDashboard() {
   const { user, loading: authLoading } = useAuth();
@@ -14,6 +14,14 @@ export default function MechanicDashboard() {
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState('');
   const [completionNote, setCompletionNote] = useState('');
+
+  // --- Salary Advances State ---
+  const [advances, setAdvances] = useState([]);
+  const [showAdvanceForm, setShowAdvanceForm] = useState(false);
+  const [advanceAmount, setAdvanceAmount] = useState('');
+  const [advanceReason, setAdvanceReason] = useState('');
+  const [advanceError, setAdvanceError] = useState('');
+  const [advanceSuccess, setAdvanceSuccess] = useState('');
 
   useEffect(() => {
     // Wait for auth to finish resolving before we do anything
@@ -31,6 +39,10 @@ export default function MechanicDashboard() {
         ]);
         setJobs(jobsData);
         setPayrolls(payrollData);
+
+        // Fetch advances in background
+        const advData = await getAdvances();
+        setAdvances(advData);
       } catch (err) {
         setErrorMsg(err.message || 'Error fetching data.');
       } finally {
@@ -69,6 +81,23 @@ export default function MechanicDashboard() {
     await handleUpdateStatus(selectedJobId, 'Completed', completionNote);
     setSelectedJobId('');
     setCompletionNote('');
+  };
+
+  const handleRequestAdvance = async (e) => {
+    e.preventDefault();
+    setAdvanceError('');
+    setAdvanceSuccess('');
+    try {
+      await requestAdvance({ amount: parseFloat(advanceAmount), reason: advanceReason });
+      setAdvanceSuccess('Advance request submitted! Awaiting admin approval.');
+      setAdvanceAmount('');
+      setAdvanceReason('');
+      setShowAdvanceForm(false);
+      const advData = await getAdvances();
+      setAdvances(advData);
+    } catch (err) {
+      setAdvanceError(err.message || 'Failed to submit advance request.');
+    }
   };
 
   return (
@@ -155,6 +184,7 @@ export default function MechanicDashboard() {
                     <th>Days Worked</th>
                     <th>Base Amount</th>
                     <th>Bonus Pay</th>
+                    <th>Advance Deduction</th>
                     <th>Total Paycheck</th>
                     <th>Processed Date</th>
                   </tr>
@@ -164,8 +194,11 @@ export default function MechanicDashboard() {
                     <tr key={pr.id}>
                       <td>{pr.days_worked} days</td>
                       <td>${parseFloat(pr.base_amount).toFixed(2)}</td>
-                      <td style={{ color: parseFloat(pr.bonus_amount) > 0 ? 'var(--danger)' : 'inherit' }}>
-                        ${parseFloat(pr.bonus_amount).toFixed(2)}
+                      <td style={{ color: parseFloat(pr.bonus_amount) > 0 ? 'var(--success)' : 'inherit' }}>
+                        +${parseFloat(pr.bonus_amount).toFixed(2)}
+                      </td>
+                      <td style={{ color: parseFloat(pr.advance_deduction || 0) > 0 ? '#ef4444' : 'inherit' }}>
+                        -${parseFloat(pr.advance_deduction || 0).toFixed(2)}
                       </td>
                       <td style={{ fontWeight: '600', color: 'var(--success)' }}>
                         ${parseFloat(pr.total_amount).toFixed(2)}
@@ -175,6 +208,86 @@ export default function MechanicDashboard() {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Salary Advances Section */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3>💳 Salary Advances</h3>
+              <button
+                className={`btn ${showAdvanceForm ? 'btn-secondary' : 'btn-primary'}`}
+                onClick={() => { setShowAdvanceForm(!showAdvanceForm); setAdvanceError(''); setAdvanceSuccess(''); }}
+              >
+                {showAdvanceForm ? 'Cancel' : '+ Request Advance'}
+              </button>
+            </div>
+
+            {advanceError  && <div className="alert alert-error">{advanceError}</div>}
+            {advanceSuccess && <div className="alert alert-success">{advanceSuccess}</div>}
+
+            {showAdvanceForm && (
+              <div className="form-card animate-fade-in" style={{ marginBottom: '20px' }}>
+                <h4 style={{ marginBottom: '14px' }}>New Advance Request</h4>
+                <form onSubmit={handleRequestAdvance}>
+                  <div className="form-group" style={{ marginBottom: '12px' }}>
+                    <label className="form-label">Amount ($)</label>
+                    <input
+                      type="number" min="1" step="0.01"
+                      className="input-field"
+                      value={advanceAmount}
+                      onChange={(e) => setAdvanceAmount(e.target.value)}
+                      placeholder="e.g. 300.00"
+                      required
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: '16px' }}>
+                    <label className="form-label">Reason (optional)</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      value={advanceReason}
+                      onChange={(e) => setAdvanceReason(e.target.value)}
+                      placeholder="e.g. Medical expenses"
+                    />
+                  </div>
+                  <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Submit Request</button>
+                </form>
+              </div>
+            )}
+
+            {advances.length === 0 ? (
+              <div className="form-card" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                No advance requests yet.
+              </div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Amount</th>
+                    <th>Reason</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {advances.map(adv => {
+                    const statusColor = adv.status === 'Approved' ? '#3b82f6' : adv.status === 'Deducted' ? 'var(--success)' : adv.status === 'Rejected' ? '#ef4444' : 'var(--text-muted)';
+                    return (
+                      <tr key={adv.id}>
+                        <td style={{ fontWeight: '700' }}>${parseFloat(adv.amount).toFixed(2)}</td>
+                        <td style={{ color: 'var(--text-secondary)' }}>{adv.reason || '—'}</td>
+                        <td style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{new Date(adv.request_date).toLocaleDateString()}</td>
+                        <td>
+                          <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '0.78rem', fontWeight: '700', background: `${statusColor}22`, color: statusColor }}>
+                            {adv.status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}

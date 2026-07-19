@@ -115,6 +115,71 @@ export const deleteJob = async (jobId) => {
   return handleResponse(res);
 };
 
+// Update billing info on a completed job (Admin only)
+export const updateJobBilling = async (jobId, { customer_price, payment_status }) => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/billing`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ customer_price, payment_status })
+  });
+  return handleResponse(res);
+};
+
+// Fetch financial report for a given month/year (Admin only)
+export const getFinancialReport = async (year, month) => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/reports/financial?year=${year}&month=${month}`, { headers });
+  return handleResponse(res);
+};
+
+// Fetch annual report data (all 12 months) for charts (Admin only)
+export const getAnnualReport = async (year) => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/reports/annual?year=${year}`, { headers });
+  return handleResponse(res);
+};
+
+// Fetch total completed job revenue for a mechanic within a date range (Admin only)
+export const getMechanicRevenueMetric = async (mechanicId, start, end) => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/jobs/revenue-metric?mechanicId=${mechanicId}&start=${start}&end=${end}`, { headers });
+  return handleResponse(res);
+};
+
+/**
+ * --- Salary Advances API ---
+ */
+
+// Fetch advances (Admin: all; Mechanic: own)
+export const getAdvances = async () => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/advances`, { headers });
+  return handleResponse(res);
+};
+
+// Mechanic requests a salary advance
+export const requestAdvance = async ({ amount, reason }) => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/advances`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ amount, reason })
+  });
+  return handleResponse(res);
+};
+
+// Admin approves or rejects an advance
+export const updateAdvanceStatus = async (advanceId, status) => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/advances/${advanceId}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ status })
+  });
+  return handleResponse(res);
+};
+
 
 
 // Fetch all payroll history records (Admin only)

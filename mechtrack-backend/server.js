@@ -231,6 +231,141 @@ app.patch('/api/jobs/:id/status', requireAuth, async (req, res) => {
   }
 });
 
+// 5. Update Job Billing (Admin Only)
+app.patch('/api/jobs/:id/billing', requireAuth, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { customer_price, payment_status } = req.body;
+
+  if (customer_price === undefined || !payment_status) {
+    return res.status(400).json({ error: 'Missing customer_price or payment_status' });
+  }
+  if (!['Paid', 'Not paid'].includes(payment_status)) {
+    return res.status(400).json({ error: 'payment_status must be "Paid" or "Not paid"' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('jobs')
+      .update({
+        customer_price: parseFloat(customer_price),
+        payment_status,
+        billed_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(200).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * --- Salary Advance Endpoints ---
+ */
+
+// 1. Get advances (Admin gets all with mechanic details; Mechanic gets own)
+app.get('/api/advances', requireAuth, async (req, res) => {
+  try {
+    let query = supabase.from('salary_advances').select(`
+      *,
+      mechanic:mechanics(id, full_name, email)
+    `);
+
+    if (!req.user.is_admin) {
+      query = query.eq('mechanic_id', req.user.id);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw error;
+    res.status(200).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Create advance request (Mechanic)
+app.post('/api/advances', requireAuth, async (req, res) => {
+  const { amount, reason } = req.body;
+  if (!amount || parseFloat(amount) <= 0) {
+    return res.status(400).json({ error: 'amount must be a positive number' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('salary_advances')
+      .insert([{
+        mechanic_id:  req.user.id,
+        amount:       parseFloat(amount),
+        reason:       reason || null,
+        request_date: new Date().toISOString().split('T')[0],
+        status:       'Pending'
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Approve or Reject an advance (Admin only)
+app.patch('/api/advances/:id', requireAuth, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  if (!['Approved', 'Rejected'].includes(status)) {
+    return res.status(400).json({ error: 'status must be "Approved" or "Rejected"' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('salary_advances')
+      .update({ status })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(200).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * --- Job Metrics Endpoints ---
+ */
+
+// GET /api/jobs/revenue-metric?mechanicId=...&start=...&end=... (Admin only)
+app.get('/api/jobs/revenue-metric', requireAuth, requireAdmin, async (req, res) => {
+  const { mechanicId, start, end } = req.query;
+  if (!mechanicId || !start || !end) {
+    return res.status(400).json({ error: 'Missing mechanicId, start, or end' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('jobs')
+      .select('customer_price')
+      .eq('assigned_to', mechanicId)
+      .eq('status', 'Completed')
+      .gte('completed_at', start)
+      .lte('completed_at', end);
+
+    if (error) throw error;
+
+    const totalRevenue = data.reduce((sum, r) => sum + parseFloat(r.customer_price || 0), 0);
+    res.status(200).json({ totalRevenue: parseFloat(totalRevenue.toFixed(2)) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /**
  * --- Payroll Endpoints ---
  */
@@ -329,6 +464,108 @@ app.patch('/api/profile', requireAuth, async (req, res) => {
 
     if (error) throw error;
     res.status(200).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * --- Financial Reports Endpoint ---
+ */
+
+// GET /api/reports/financial?year=2026&month=7 (Admin Only)
+app.get('/api/reports/financial', requireAuth, requireAdmin, async (req, res) => {
+  const year  = parseInt(req.query.year  || new Date().getFullYear());
+  const month = parseInt(req.query.month || new Date().getMonth() + 1);
+
+  // Build date range for the given month
+  const periodStart = new Date(year, month - 1, 1).toISOString();
+  const periodEnd   = new Date(year, month, 0, 23, 59, 59).toISOString();
+
+  try {
+    // 1. Revenue: sum of customer_price for Paid jobs billed in the month
+    const { data: jobRows, error: jobErr } = await supabase
+      .from('jobs')
+      .select('customer_price')
+      .eq('payment_status', 'Paid')
+      .gte('billed_at', periodStart)
+      .lte('billed_at', periodEnd);
+
+    if (jobErr) throw jobErr;
+
+    const revenue = jobRows.reduce((sum, r) => sum + parseFloat(r.customer_price || 0), 0);
+
+    // 2. Salaries: sum of total_amount for Paid payroll records in the month
+    const { data: payrollRows, error: payrollErr } = await supabase
+      .from('payroll')
+      .select('total_amount')
+      .eq('status', 'Paid')
+      .gte('period_end', periodStart)
+      .lte('period_end', periodEnd);
+
+    if (payrollErr) throw payrollErr;
+
+    const salaries = payrollRows.reduce((sum, r) => sum + parseFloat(r.total_amount || 0), 0);
+
+    res.status(200).json({
+      year,
+      month,
+      revenue:    parseFloat(revenue.toFixed(2)),
+      salaries:   parseFloat(salaries.toFixed(2)),
+      net_profit: parseFloat((revenue - salaries).toFixed(2))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/annual?year=2026 (Admin Only)
+app.get('/api/reports/annual', requireAuth, requireAdmin, async (req, res) => {
+  const year = parseInt(req.query.year || new Date().getFullYear());
+  const yearStart = new Date(year, 0, 1).toISOString();
+  const yearEnd   = new Date(year, 11, 31, 23, 59, 59).toISOString();
+
+  try {
+    const { data: jobRows, error: jobErr } = await supabase
+      .from('jobs')
+      .select('customer_price, billed_at')
+      .eq('payment_status', 'Paid')
+      .gte('billed_at', yearStart)
+      .lte('billed_at', yearEnd);
+    if (jobErr) throw jobErr;
+
+    const { data: payrollRows, error: payrollErr } = await supabase
+      .from('payroll')
+      .select('total_amount, period_end')
+      .eq('status', 'Paid')
+      .gte('period_end', yearStart)
+      .lte('period_end', yearEnd);
+    if (payrollErr) throw payrollErr;
+
+    const months = Array.from({ length: 12 }, (_, i) => ({
+      month: i + 1,
+      monthName: new Date(year, i, 1).toLocaleString('default', { month: 'short' }),
+      revenue: 0,
+      salaries: 0
+    }));
+
+    jobRows.forEach(r => {
+      const m = new Date(r.billed_at).getMonth();
+      months[m].revenue += parseFloat(r.customer_price || 0);
+    });
+    payrollRows.forEach(r => {
+      const m = new Date(r.period_end).getMonth();
+      months[m].salaries += parseFloat(r.total_amount || 0);
+    });
+
+    const result = months.map(m => ({
+      ...m,
+      revenue:    parseFloat(m.revenue.toFixed(2)),
+      salaries:   parseFloat(m.salaries.toFixed(2)),
+      net_profit: parseFloat((m.revenue - m.salaries).toFixed(2))
+    }));
+
+    res.status(200).json({ year, months: result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
