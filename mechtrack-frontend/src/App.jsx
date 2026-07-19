@@ -3,93 +3,135 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { useState, useEffect } from 'react';
 import { supabase } from './lib/supabaseClient';
 import AdminDashboard from './components/AdminDashboard';
+import MechanicDashboard from './components/MechanicDashboard';
+import ProfilePage from './components/ProfilePage';
+import './App.css';
 
+// --- Root Handler: always signs out then shows login ---
+// Supabase stores sessions in localStorage, so we must explicitly clear it
+// before redirecting to the login page.
+const RootHandler = () => {
+  const { signOut } = useAuth();
+  const [done, setDone] = useState(false);
 
-// --- Placeholder Login Page ---
+  useEffect(() => {
+    const clearSession = async () => {
+      await signOut(); // wipe existing session
+      setDone(true);
+    };
+    clearSession();
+  }, []);
+
+  if (!done) return null; // brief moment while signing out
+  return <Navigate to="/login" replace />;
+};
+
+// --- Login Page ---
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   
-  const { user } = useAuth();
   const navigate = useNavigate();
-
-  // If the user is ALREADY logged in, automatically move them to the dashboard
-  useEffect(() => {
-    if (user) {
-      navigate('/');
-    }
-  }, [user, navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg('');
-    
+
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    
+
     if (error) {
       setErrorMsg(error.message);
+      setLoading(false);
     } else {
-      // SUCCESS! Move the user to the main dashboard page
-      navigate('/'); 
+      // Navigate to dashboard only after a successful fresh login
+      navigate('/dashboard', { replace: true });
     }
-    
-    setLoading(false);
   };
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontFamily: 'sans-serif', backgroundColor: '#f3f4f6' }}>
-      <form onSubmit={handleLogin} style={{ background: '#fff', padding: '30px', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', width: '320px' }}>
-        <h2 style={{ marginTop: 0, color: '#1f2937', textAlign: 'center' }}>🛠️ MechTrack Login</h2>
+    <div className="login-page animate-fade-in">
+      <div className="glass-panel login-card">
+        <h2 className="login-title">⚙️ MechTrack</h2>
         
-        {errorMsg && <p style={{ color: '#dc2626', fontSize: '14px', backgroundColor: '#fee2e2', padding: '8px', borderRadius: '4px' }}>{errorMsg}</p>}
+        {errorMsg && (
+          <div className="alert alert-error">
+            <span>⚠️</span> {errorMsg}
+          </div>
+        )}
         
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', fontSize: '14px', color: '#4b5563' }}>Email Address</label>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ width: '100%', padding: '8px', boxSizing: 'border-box', border: '1px solid #d1d5db', borderRadius: '4px' }} />
-        </div>
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', fontSize: '14px', color: '#4b5563' }}>Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required style={{ width: '100%', padding: '8px', boxSizing: 'border-box', border: '1px solid #d1d5db', borderRadius: '4px' }} />
-        </div>
-        <button type="submit" disabled={loading} style={{ width: '100%', padding: '10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-          {loading ? 'Logging in...' : 'Sign In'}
-        </button>
-      </form>
+        <form onSubmit={handleLogin}>
+          <div className="form-group">
+            <label className="form-label">Email Address</label>
+            <input 
+              type="email" 
+              className="input-field" 
+              value={email} 
+              onChange={(e) => setEmail(e.target.value)} 
+              required 
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <input 
+              type="password" 
+              className="input-field" 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              required 
+            />
+          </div>
+          <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }} disabled={loading}>
+            {loading ? 'Logging in...' : 'Sign In'}
+          </button>
+        </form>
+      </div>
     </div>
   );
 };
 
-// --- Placeholder Dashboard Page ---
-// --- Placeholder Dashboard Page ---
+// --- Dashboard Page ---
 const Dashboard = () => {
-  const { user, profile } = useAuth();
-  
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
+  const { user, profile, profileLoading, signOut } = useAuth();
+  const navigate = useNavigate();
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'sans-serif' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1f2937', color: 'white', padding: '15px 20px', borderRadius: '8px', marginBottom: '20px' }}>
-        <h1 style={{ margin: 0, fontSize: '20px' }}>⚙️ MechTrack</h1>
-        <div>
-          <span style={{ marginRight: '15px' }}>Welcome, {profile?.name || user?.email}</span>
-          <button onClick={handleLogout} style={{ padding: '6px 12px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+    <div className="app-container animate-fade-in">
+      <header className="dashboard-header">
+        <div className="brand-title">⚙️ MechTrack</div>
+        <div className="user-controls">
+          <span className="welcome-text">Welcome, {profile?.full_name || user?.email}</span>
+          <button onClick={() => navigate('/profile')} className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '14px' }}>
+            👤 Profile
+          </button>
+          <button onClick={signOut} className="btn btn-secondary">
             Sign Out
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* If they are an admin, show the AdminDashboard. Otherwise, show a mechanic placeholder */}
-      {profile?.is_admin ? (
-        <AdminDashboard />
-      ) : (
-        <div><h3>🔧 Mechanic Portal</h3><p>Your tasks will appear here.</p></div>
-      )}
-      
+      <main className="main-content">
+        {profileLoading ? (
+          // Wait for profile (is_admin flag) before deciding which dashboard to show
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '40px 0', color: 'var(--text-secondary)' }}>
+            <div style={{
+              width: '20px', height: '20px',
+              border: '3px solid var(--border-light, #e2e8f0)',
+              borderTopColor: 'var(--accent-primary, #3b82f6)',
+              borderRadius: '50%',
+              animation: 'spin 0.8s linear infinite'
+            }} />
+            Loading your dashboard...
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        ) : profile?.is_admin ? (
+          <AdminDashboard />
+        ) : (
+          <MechanicDashboard />
+        )}
+      </main>
     </div>
   );
 };
@@ -108,12 +150,21 @@ export default function App() {
     <AuthProvider>
       <Router>
         <Routes>
+          {/* Root: sign out any existing session, then go to login */}
+          <Route path="/" element={<RootHandler />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/" element={
+          <Route path="/dashboard" element={
             <ProtectedRoute>
               <Dashboard />
             </ProtectedRoute>
           } />
+          <Route path="/profile" element={
+            <ProtectedRoute>
+              <ProfilePage />
+            </ProtectedRoute>
+          } />
+          {/* Catch-all: redirect unknown paths to login */}
+          <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </Router>
     </AuthProvider>

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '../lib/supabaseClient'; // Make sure this path is correct
+import { supabase } from '../lib/supabaseClient';
 
 // Create the context
 const AuthContext = createContext();
@@ -8,78 +8,143 @@ const AuthContext = createContext();
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true); // Start in a loading state
+  const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
+
+  // Helper to fetch a user's mechanic profile
+  const fetchProfile = async (userId) => {
+    setProfileLoading(true);
+    try {
+      const { data: profileData, error } = await supabase
+        .from('mechanics')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (error) {
+        console.error("Error fetching profile:", error.message);
+        return null;
+      }
+      return profileData;
+    } catch (err) {
+      console.error("Profile fetch exception:", err);
+      return null;
+    } finally {
+      setProfileLoading(false);
+    }
+  };
 
   useEffect(() => {
-    // This effect runs once when the component mounts
-    const fetchSessionAndProfile = async () => {
-      // 1. Get the current session from Supabase
-      const { data: { session } } = await supabase.auth.getSession();
-      const currentUser = session?.user || null;
-      setUser(currentUser);
+    let isMounted = true;
 
-      // 2. If there's a user, fetch their profile from our 'mechanics' table
-      if (currentUser) {
-        const { data: profileData, error } = await supabase
-          .from('mechanics')
-          .select('*')
-          .eq('id', currentUser.id)
-          .single(); // .single() expects one row and simplifies the result
-
-        if (error) {
-          console.error("Error fetching profile:", error.message);
-        } else {
-          setProfile(profileData);
-        }
+    // Safety timeout: if loading takes more than 5 seconds, force show the app
+    const safetyTimer = setTimeout(() => {
+      if (isMounted) {
+        setLoading(false);
+        setProfileLoading(false);
       }
-      
-      // 3. We are done loading
-      setLoading(false);
-    };
+    }, 5000);
 
-    // Run the initial fetch
-    fetchSessionAndProfile();
-
-    // 4. Set up a listener for any future changes in auth state (login/logout)
+    // Single source of truth for auth session changes (fires INITIAL_SESSION on registration)
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (!isMounted) return;
+
         const currentUser = session?.user || null;
         setUser(currentUser);
-        setProfile(null); // Clear old profile
 
-        // If a new user logs in, fetch their profile
         if (currentUser) {
-          const { data: profileData } = await supabase
-            .from('mechanics')
-            .select('*')
-            .eq('id', currentUser.id)
-            .single();
-          setProfile(profileData);
+          const profileData = await fetchProfile(currentUser.id);
+          if (isMounted) {
+            setProfile(profileData);
+            setLoading(false);
+          }
+        } else {
+          setProfile(null);
+          setLoading(false);
         }
-        
-        // After a login/logout event, we are also done loading
-        setLoading(false);
       }
     );
 
-    // Cleanup: remove the listener when the component unmounts
     return () => {
+      isMounted = false;
+      clearTimeout(safetyTimer);
       authListener.subscription.unsubscribe();
     };
-  }, []); // The empty array [] means this effect runs only once
+  }, []);
+
+  const handleSignOut = async () => {
+    // 1. Immediately clear local state so ProtectedRoute redirects instantly
+    setUser(null);
+    setProfile(null);
+
+    // 2. Wipe all Supabase keys from localStorage
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith('sb-') || key.includes('supabase'))) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+
+    // 3. Call Supabase signOut (best effort)
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch (err) {
+      console.error('Supabase signOut error:', err);
+    }
+  };
+
+  // Exposed so any component can refresh global profile after an update
+  const refreshProfile = async () => {
+    if (!user) return;
+    const profileData = await fetchProfile(user.id);
+    setProfile(profileData);
+  };
 
   const value = {
     user,
     profile,
-    loading
+    loading,
+    profileLoading,
+    signOut: handleSignOut,
+    refreshProfile
   };
 
-  // While loading, we can show a blank screen or a spinner.
-  // This prevents the rest of the app from rendering with incomplete data.
-  // The 'return loading ? null : ...' pattern is the key fix.
+  // Show a loading spinner ONLY while the initial auth check is happening
+  if (loading) {
+    return (
+      <AuthContext.Provider value={value}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '100vh',
+          background: 'var(--bg-primary, #f8fafc)',
+          color: 'var(--text-secondary, #475569)',
+          fontFamily: 'Inter, sans-serif',
+          fontSize: '16px',
+          gap: '12px'
+        }}>
+          <div style={{
+            width: '24px',
+            height: '24px',
+            border: '3px solid var(--border-light, #e2e8f0)',
+            borderTopColor: 'var(--accent-primary, #3b82f6)',
+            borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite'
+          }} />
+          Loading MechTrack...
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      </AuthContext.Provider>
+    );
+  }
+
   return (
     <AuthContext.Provider value={value}>
-      {loading ? null : children}
+      {children}
     </AuthContext.Provider>
   );
 };
